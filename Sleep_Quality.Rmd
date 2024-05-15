@@ -1,0 +1,746 @@
+---
+title: "Predicting Sleep Quality"
+author: "James San"
+date: "UCSB Fall 2023"
+output: 
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The main purpose of this project is to build a model that will be able to predict the quality of sleep based on a multitude of internal and external factors affecting a person. We will be using data sourced from Kaggle to generate machine learning models, find the most most accurate model, and make accurate predictions for this classification problem.
+
+![](images/donald%20duck%20sleep.gif){width="379"}
+
+## Why Sleep?
+
+Sleep is one of the most important functions for the human body as consistent, quality, sleep is often needed for good health. When your body goes to sleep your brain is still working, it goes through a repairment process by first removing waste and toxins. Everything from blood vessels to your immune system rely on sleep to repair. Thus. a lack of quality sleep often leads to larger issues down the line by raising the risks of many diseases and disorders. According to the Centers for Disease Control and Prevention, in 2020 it was reported that 14.5 percent of adults in Ameica had trouble falling asleep most days with this number continuing to rise.
+
+## What Are We Trying to Do?
+
+With all the data readily available to us we can try to find correlations and relationships between a lifestyle and sleep quality to best predict what may cause or not cause good sleep. This will be a classification problem as we rank sleep quality from a number 1-10, 10 being the best possible sleep and 1 being the worst. Using factors ranging from age, heart rate, etc. we can ask, Does occupation affect sleep quality? What about physical activity level throughout the day? We can develop models and see if sleep quality levels can be explained by these elements.
+
+## Project Roadmap
+
+To build this project we start with data manipulation and cleaning to prepare our data for modeling. We then move onto exploratory data analysis to learn more about our predictor and outcome variables, notice any relationships and correlations. Afterwards we will conduct a training and testing split of the data, create a recipe for our models, and make a k-fold cross validation to train our data. Following this we will create and run our models, I have decided on 4 models, elastic net, k-nearest neighbors, random forest, and boosted trees. We will then find the model that performed the best based on the metrics and see how well it can predict quality of sleep.
+
+## Loading Packages and Data
+
+We begin by loading in our raw data and packages and factor our variables.
+
+```{r, warning = FALSE, results = 'hide', fig.show = 'hide', message = FALSE }
+
+library(tidyverse, quietly = T)
+library(dplyr, quietly = T)
+library(tidymodels, quietly = T)
+library(readr, quietly = T)
+library(kknn, quietly = T)
+library(janitor, quietly = T)
+library(ISLR, quietly = T)
+library(knitr, quietly = T)
+library(MASS, quietly = T)
+library(discrim, quietly = T)
+library(poissonreg, quietly = T)
+library(glmnet, quietly = T)
+library(corrr, quietly = T)
+library(corrplot, quietly = T)
+library(randomForest, quietly = T)
+library(xgboost, quietly = T)
+library(rpart.plot, quietly = T)
+library(vip, quietly = T)
+library(ranger, quietly = T)
+library(tidytext, quietly = T)
+library(ggplot2, quietly = T)
+library(themis, quietly = T)
+library(varhandle, quietly = T)
+tidymodels_prefer()
+
+#Setting working directory and assigning data set to variable, sleep.
+setwd("C:/Users/James San/Downloads/Pstat 131/131 Project")
+sleep <- read_csv("SleepDataset.csv", show_col_types = FALSE)
+sleep <- clean_names(sleep) #clean variable names
+```
+
+Data is from the Kaggle data set, [Sleep and Lifestyle Dataset](https://www.kaggle.com/datasets/uom190346a/sleep-health-and-lifestyle-dataset/data), by user Lakiska Tharmalingam.
+
+## Exploratory Data Analysis
+
+We need to get our data ready for application by seeing which variables need manipulating or tidying. Furthermore, we need to check for any missing values or if any variables needs to be factorized. This step will allow us to then explore relationships and generate models without issues within the data itself.
+
+### Exploring and Tidying Raw Data
+
+```{r}
+#Looking at the first few observations to see if data set was assigned properly, also checking dimensions of data set.
+sleep %>% 
+  head()
+
+dim(sleep)
+```
+
+There are 374 observations, 374 different people who were gathered data on, and 13 variables. Our response variable is sleep quality as that is what we are trying to predict, therefore we have 12 predictor variables which is a good amount. Further checking the variable descriptions it seems that they all may have a direct impact on sleep quality so we will keep them all.
+
+#### Tidying BMI Category Variable
+
+I noticed for the BMI Category variable, some values were displayed as normal weight rather than normal so we have to address that. Furthermore
+
+```{r}
+
+sleep[ , "bmi_category"] <- if_else(sleep$bmi_category == 'Normal Weight', 'Normal',sleep$bmi_category)
+
+```
+
+#### Tidying Blood Pressure Variable
+
+Moving on, I noticed the Blood Pressure Variable was a character variable in the form of 'systolic number / diastolic number'. This could cause complications when modeling and for readability so we will instead change the values to Low, Normal, Elevated, High Stage 1 , High Stage 2, and Hypertension Crisis.
+
+```{r}
+
+BloodPressureSplit<-str_split(sleep$blood_pressure,'/')
+
+Systolic <- lapply(BloodPressureSplit,function(x) x[1])
+Systolic <- as.numeric(Systolic)
+
+Diastolic <- lapply(BloodPressureSplit, function(x) x[2])
+Diastolic <- as.numeric(Diastolic)
+
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic < 120 & Diastolic < 80, 'Normal', sleep$blood_pressure)
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic < 90 & Diastolic < 60, 'Low', sleep$blood_pressure)
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic >= 120 & Systolic <= 129 | Diastolic >= 80 & Diastolic <= 84, 'Elevated', sleep$blood_pressure)
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic >= 130 & Systolic <= 139 | Diastolic >= 85 & Diastolic >= 89, 'High Stage 1', sleep$blood_pressure)
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic >= 140 | Diastolic >= 90, 'High Stage 2', sleep$blood_pressure)
+
+sleep[ ,"blood_pressure"] <- if_else(Systolic >= 180 & Diastolic >= 120 | Diastolic >= 120, 'Hypertension Crisis', sleep$blood_pressure)
+
+```
+
+Blood Pressure Levels were sourced from Harvard Health.
+
+#### Tidying Occupation Variable
+
+There are 11 unique occupations in this data set but we can further lower it. Sales Representative appears only twice in the data and since it's one in the same with Salesperson we can combine the two. We can also combine software engineer with engineer as they are both the same field. Furthermore, there is only one observation with Manager and four observations with scientists so it would not be very telling in its relationship with sleep quality so we will remove it.
+
+```{r}
+unique(sleep$occupation)
+table(sleep$occupation)
+
+sleep[ ,"occupation"] <- if_else(sleep$occupation == "Sales Representative", "Salesperson", sleep$occupation)
+
+sleep[ ,"occupation"] <- if_else(sleep$occupation == "Software Engineer", "Engineer", sleep$occupation)
+
+sleep %>%
+filter(occupation == "Manager")
+sleep = filter(sleep, occupation != "Manager")
+
+sleep %>%
+  filter(occupation == "Scientist")
+
+sleep = filter(sleep, occupation != "Scientist")
+
+```
+
+#### Tidying Quality of Sleep Variable
+
+Because the quality of sleep variable only has 3 observations where the rating is 4 and 7 observations where the rating is 5, since those are too few observations we have to remove them as it could affect our models later on.
+
+```{r}
+table(sleep$quality_of_sleep)
+
+sleep = filter(sleep, quality_of_sleep != 4)
+sleep = filter(sleep, quality_of_sleep != 5)
+```
+
+### Factoring Variables
+
+We factorize the categorical variables. However, we drop the factor levels where there are not any observations that have that factor.
+
+```{r}
+sleep$quality_of_sleep <- factor(sleep$quality_of_sleep)
+sleep$gender <- factor(sleep$gender, ordered = TRUE, levels = c('Male','Female'))
+sleep$bmi_category <- factor(sleep$bmi_category)
+sleep$sleep_disorder <- factor(sleep$sleep_disorder)
+sleep$blood_pressure<-factor(sleep$blood_pressure)
+sleep$stress_level<- factor(sleep$stress_level)
+sleep$occupation <- factor(sleep$occupation)
+
+levels(sleep$quality_of_sleep)
+```
+
+### Check for Missing Values
+
+We have to check if there are any missing values in the data as it could affect our models later on.
+
+```{r}
+summary(sleep)
+
+head(sleep) #One last check on our data
+dim(sleep)
+```
+
+Looking at the summary of the data, there are in fact no missing values. Also looking at the dimensions we end up with 359 total which was brought down from 374.
+
+### Predictor Variables
+
+As a result of our exploratory data analysis we have confirmed which variables we will be using in our models to predict sleep quality.
+
+-   `Person ID` : The unique identifier for each individual.
+-   `Gender` : Sex of the individual, Male/Female.
+-   `Age` : Age of the individual in years.
+-   `Occupation` : The individual's profession.
+-   `Sleep Duration` : How many hours the individual sleeps in a day.
+-   `Physical Activity Level` : Number of minutes an individual does physical activity in a day.
+-   `Stress Level` : Stress level on a scale from 1-10 rated by the individual.
+-   `BMI Category` : BMI Category of the individual, Underweight, Normal, Overweight, Obese.
+-   `Blood Pressure` : Blood Pressure level of the individual, Low, Normal, Elevated, High Stage 1, Stage 2, and Hypertension Crisis.
+-   `Heart Rate` : Resting heart rate of the individual measured in beats per minute.
+-   `Daily Steps` : Number of steps the individual takes in a single day.
+-   `Sleep Disorder` : If the individual has a sleep disorder being None, Insomnia, or Sleep Apnea.
+
+## Visual EDA
+
+With our data tidied we can now create visualizations and look for relationships between the variables.
+
+#### Sleep Quality
+
+Let's start by checking out our outcome variable, sleep quality. We create a bar plot to see the distribution.
+
+```{r}
+sleep %>%
+  ggplot(aes(x=quality_of_sleep)) + geom_bar(fill='blue') + labs(x='Quality of Sleep',y='Count',title = "Quality of Sleep Distribution")
+
+table(sleep$quality_of_sleep)
+
+```
+
+A majority of individuals appeared to have rated their quality of sleep between 6-9, 8 being the highest with 109 observations, with no one actually rating their sleep a 10 or below a 4. What surprised me was there were only 12 individuals who had rated their sleep below 6 which is around 3.2%, I would have expected more.
+
+### Occupation
+
+There are a total of 10 different occupations listed in this data set. I found this predictor variable to be interesting as there are many stigmas surrounding specific jobs and could have potential correlations with sleep quality. Which jobs have a lower average sleep quality rating? Which ones have a higher average? We'll use a box plot to observe this.
+
+```{r}
+
+sleep %>%
+  ggplot(aes(x= unfactor(quality_of_sleep) , y = occupation, fill = occupation)) + geom_boxplot() +
+  labs(title = 'Occupation Boxplot',
+        y = "Occupation",
+        x = "Sleep Quality") 
+
+```
+
+Looking at the box plot we can find the average ratings of sleep quality for each occupation. Engineers, Lawyers, and Accountants have the highest average with 8! I thought this was especially surprising due to the fact that these jobs have the stigma of being in a more demanding environment. In the bottom we have salesperson which has an average rating of 6.
+
+Looking at the spread of each occupation, Nurses has the largest spreads meaning it had diverse ratings between individuals. On the other hand, Teachers, Salespeople, Lawyers, and Accountants have no spread, so their individuals all were in concurrence with their ratings.
+
+### Variable Correlation Plot
+
+We create a correlation plot to look for any relationships between the continuous variables.
+
+Since we had factored quality of sleep and stress levels they are no longer numeric but if we want to visualize correlations between the outcome and predictor variables we can change them to numeric for the correlation graph.
+
+```{r, results = 'hide'}
+#Change to Numeric
+is.numeric(sleep$quality_of_sleep)
+is.numeric(sleep$stress_level)
+
+sleep$quality_of_sleep<- as.numeric(as.character(sleep$quality_of_sleep))
+sleep$stress_level <- as.numeric(as.character(sleep$stress_level))
+
+
+sleep_numeric <- sleep %>%
+  select_if(is.numeric)
+
+#Correlation matrix
+sleep_cor <- cor(sleep_numeric)
+
+#Visualization of correlation plot
+sleep_cor_plot <- corrplot(sleep_cor,order = 'AOE', method = 'shade', addCoef.col = 1.5, number.cex = 0.5, col = COL2('RdYlBu'))
+
+#Change back to factor
+sleep$stress_level <- factor(sleep$stress_level)
+sleep$quality_of_sleep <- factor(sleep$quality_of_sleep)
+
+is.factor(sleep$quality_of_sleep)
+is.factor(sleep$stress_level)
+
+```
+
+Some interesting finds is the variables with high negative correlations with the outcome variable, Quality of Sleep, are Heart Rate (-0.58) and Stress Level (-0.92). This would make sense as higher stress levels and heart rate would cause someone to struggle with sleep. Age has a positive correlation with 0.43, and I was surprised to see that Physical Activity Level had a low positive correlation with 0.11 and Daily steps actually had a low negative correlation with -0.14 respectively. I had thought someone who had done higher amounts of physical activity would find it much easier to sleep so high positive correlation was expected.
+
+### Stress Level and Sleep Quality
+
+Research has shown that stress levels do impact sleep quality. To further explore this we will visualize sleep quality ratings along with stress levels through a percent stacked bar chart.
+
+```{r}
+ggplot(sleep, aes(quality_of_sleep)) + 
+  geom_bar(aes(fill = stress_level)) +
+  scale_fill_manual(values = c("blue", "red","pink", "yellow","purple", "green"))
+
+```
+
+As we can see in the stacked bar chart, the sleep quality ratings in the higher range are dominated by individuals whose stress levels are at 5 and below. Upon further inspection, the bar for sleep quality rating 9 is filled with nearly all individuals with a stress level of 3. This alone shows us that sleep quality and stress are in fact correlated with better sleep quality attributing to lower stress.
+
+### BMI and Sleep Quality
+
+Now we are going to take a look at BMI category along with Sleep Quality. BMI is categorized in 3 levels, normal, obese, and overweight. I am interested to see if there is in fact a relationship we can observe between BMI and sleep quality. For this we will be taking a look at another stacked percent bar chart.
+
+```{r}
+ggplot(sleep, aes(quality_of_sleep)) + 
+  geom_bar(aes(fill = bmi_category)) +
+  scale_fill_manual(values = c("blue", "red", "green"))
+
+```
+
+Right away I noticed that normal and overweight both have an equal amount of individuals with a sleep rating of 5,9, and 7 so we can infer that having a normal BMI or overweight BMI doesn't really affect sleep quality. Looking at the obese category, it severely lacks in amount of observations compared to normal and overweight but if we compare the percent of observations with where they are in sleep ratings, we can see that obese observations are pretty evenly spread out. Therefore we can also conclude obese BMI isn't a factor in a individual's sleep rating. As a result, BMI category and sleep quality appear to not have a visible relationship.
+
+### Blood Pressure and Sleep Quality
+
+Next we will compare blood pressure and sleep quality. Blood Pressure is categorized in 6 levels, low, normal, elevated, high stage 1, stage 2, and hypertension crisis. Higher blood pressure causes a multitude of issues within the body such as headaches and difficulty breathing, let's see how this affects the relationship with sleep quality. From our data set we did not have any individuals with blood pressure levels of hypertension crisis or low.
+
+```{r}
+ggplot(sleep, aes(quality_of_sleep)) + 
+  geom_bar(aes(fill = blood_pressure)) +
+  scale_fill_manual(values = c("navy", "violet","springgreen", "gold","indianred", "slategrey"))
+
+```
+
+This result really surprised me as there appears to be no correlation between blood pressure and sleep quality. An individual with a high blood pressure stage 2 has an equal amount of observations in 6,7 and 9 while someone with an elevated blood pressure is also split evenly along 6,7,and 9. There isn't a clear distinction between one's blood pressure and their sleep quality.
+
+### Sleep Disorder
+
+Here we want to see how much having a sleep disorder affects sleep quality ratings. In fact it was interesting to see that individuals with sleep apnea still had high sleep quality ratings, those with insomnia did more observations in lower sleep quality ratings which can be expected.
+
+```{r}
+ggplot(sleep, aes(quality_of_sleep)) + 
+  geom_bar(aes(fill = sleep_disorder)) +
+  scale_fill_manual(values = c("navy", "violet","springgreen"))
+
+```
+
+## Setting Up Models
+
+Now we move on to the next part of our prediction models which is to start fitting and setting up our models. At this point we have an idea of how our variables interact and their relationships so we can start with splitting the data into training and testing data, create the recipe, and create the folds for cross validation.
+
+### Data Split
+
+As mentioned above we will begin by splitting the data into testing and training sets. The training set trains the models and the testing set evaluates the performance of the models allowing us to see which prediction models performed the best. I will be doing a 70/30 split, 70% for the training set and 30% for the testing set. We want more data for the training set so we have more data to train the model and prevent high bias while still have a good amount for model testing. This also helps prevent over-fitting by which occurs when there is too much data for training so it can't generalize. We stratify the outcome variable, quality_of_sleep, so both the testing and training data have an equal amount.
+
+```{r}
+set.seed(222) #Create reproducible results
+sleep_split <- sleep %>% #Splitting the data
+  initial_split(prop = 0.7, strata = "quality_of_sleep") 
+
+sleep_train <- training(sleep_split) #Training data split
+sleep_test <- testing(sleep_split) #Testing data split
+
+nrow(sleep_train)/nrow(sleep)
+
+nrow(sleep_test)/nrow(sleep)
+```
+
+We also checked to make sure the split was properly executed 70/30 which was true.
+
+### Recipe Building
+
+We will create one recipe for all our models to use since they will be using the same predictor and outcome variables. However each of the models have their own distinctive actions when applying the recipe.
+
+Our recipe will be using 11 predictors, gender, age, occupation, sleep duration, physical activity level, stress level, bmi category, blood pressure, heart rate, daily steps, and sleep disorder.
+
+We have no missing values so imputing is unnecessary.
+
+Gender, bmi category, sleep disorder, blood pressure, stress level, and occupation will be turned into dummy variables as they are categorical and not continuous.
+
+We normalize the variables with by centering and scaling the numeric data.
+
+```{r}
+sleep_recipe <- recipe(quality_of_sleep ~  gender + age + occupation + sleep_duration + physical_activity_level + stress_level + heart_rate + bmi_category + blood_pressure + daily_steps + sleep_disorder, data = sleep_train) %>%
+  
+  step_dummy(all_nominal_predictors()) %>%
+  
+  step_normalize(all_predictors())
+
+```
+
+### K-fold Cross Validation
+
+K-fold cross validation is used to evaluate models and help build a more generalized model. In this case we will split our data in 10 folds where the model is trained and evaluated. The k fold is the testing set, validation set, while the k-1 folds are the training sets for that particular testing set. Performance metrics are gathered from each fold and averaged to find performance.
+
+We stratify on the outcome variable, quality_of_sleep.
+
+```{r}
+sleep_folds <- vfold_cv(sleep_train, v = 10, strata = quality_of_sleep)
+
+```
+
+## Model Building
+
+The next step is to finally build our models. For this project we will be using 4 different model types, elastic net, k-nearest neighbors, random forest, and boosted trees. Our metric to measure performance will be ROC AUC which stands for the area under the ROC, receiver operating curve. The ROC is the probability curve and AUC is the measure of separability. It measures how well the model can distinguish positive and negative classes so the higher the score and closer to 1, the better. The models will follow the same series of steps which will be listed below.
+
+### Model Fitting
+
+1st step - Specify the model, tune the parameters, and set the engine and mode for that model.
+
+```{r}
+
+#K-Nearest Neighbors
+sleep_knn_model <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+#Elastic Net
+sleep_en_mod <- multinom_reg(mode = "classification", engine = "glmnet",
+                             penalty = tune(), mixture = tune())
+
+#Random Forest
+sleep_rf_mod <- rand_forest(mtry = tune(),
+                            trees = tune(),
+                            min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+#Boosted Trees
+sleep_bt_mod <- boost_tree(mtry = tune(),
+                           trees = tune(),
+                           learn_rate = tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+```
+
+2nd step - Set up workflows, add the model and recipe to the workflow.
+
+```{r}
+
+#KNN workflow
+knn_wkflow <- workflow() %>%
+  add_model(sleep_knn_model) %>%
+  add_recipe(sleep_recipe)
+
+#Elastic Net workflow
+en_wkflow <- workflow() %>%
+  add_model(sleep_en_mod) %>%
+  add_recipe(sleep_recipe)
+
+#Random Forest workflow
+rf_wkflow <- workflow() %>%
+  add_model(sleep_rf_mod) %>%
+  add_recipe(sleep_recipe)
+
+#Boosted Tree workflow
+bt_wkflow <- workflow() %>%
+  add_model(sleep_bt_mod) %>%
+  add_recipe(sleep_recipe)
+```
+
+3rd step - Create model grids, you can set ranges for your tuned parameters and number of levels.
+
+```{r}
+
+#K-Nearest Neighbors
+knn_grid <- grid_regular(neighbors(range = c(1,10)), levels = 10)
+
+
+#Elastic Net
+en_grid <- grid_regular(penalty(range = c(0,1),
+                                trans = identity_trans()),
+                        mixture(range = c(0,1)),
+                        levels = 10)
+
+#Random Forest
+rf_grid <- grid_regular(mtry(range = c(1,8)),
+                        trees(range = c(200,600)),
+                        min_n(range = c(10,20)),
+                        levels = 8)
+
+#Boosted Tree
+bt_grid <- grid_regular(mtry(range = c(1, 8)),
+                        trees(range = c(200, 600)),
+                        learn_rate(range = c(-0.01, 0.1)),
+                        levels = 5)
+
+```
+
+4th step - Tune the models, add the workflows, cross validation folds, and the model grids.
+
+```{r}
+
+#K-Nearest Neighbors
+knn_tune <- tune_grid(
+  object = knn_wkflow,
+  resamples = sleep_folds,
+  grid = knn_grid
+)
+
+#Elastic Net
+en_tune <- tune_grid(
+  object = en_wkflow,
+  resamples = sleep_folds,
+  grid = en_grid
+)
+
+#Random Forest
+rf_tune <- tune_grid(
+  object = rf_wkflow,
+  resamples = sleep_folds,
+  grid = rf_grid
+)
+
+#Boosted Trees
+bt_tune <- tune_grid(
+  object = bt_wkflow,
+  resamples = sleep_folds,
+  grid = bt_grid
+)
+
+
+```
+
+5th step - Save results to an RDA file to load back later as running models takes an long period of time and we want to rerun the models as few times as possible.
+
+```{r}
+
+saveRDS(knn_tune, file = "knn_tune.rda")
+saveRDS(en_tune, file = "en_tune.rda")
+saveRDS(rf_tune, file = "rf_tune.rda")
+saveRDS(bt_tune, file = "bt_tune.rda")
+```
+
+```{r, fig.show = 'hide', results = 'hide'}
+readRDS("knn_tune.rda")
+readRDS("en_tune.rda")
+readRDS("rf_tune.rda")
+readRDS("bt_tune.rda")
+
+```
+
+6th step - Look at the accuracy of the models by gathering the metrics and select the tuned models, we are looking at roc_auc or area under the ROC Curve. ROC AUC is measured from 0 to 1, the closer your score to 1, the better the model is at predicting. Then select the most optimal models.
+
+```{r, fig.show = 'hide', results = 'hide'}
+#K-Nearest Neighbors Metrics
+knn_metrics <- collect_metrics(knn_tune)
+knn_metrics
+best_knn <- show_best(knn_tune, metric = "roc_auc", n = 1)
+
+#Elastic Net Metrics
+en_metrics <- collect_metrics(en_tune) 
+en_metrics
+best_en <- show_best(en_tune, metric = 'roc_auc', n = 1)
+
+#Random Forest Metrics
+rf_metrics <- collect_metrics(rf_tune)
+rf_metrics
+best_rf <- show_best(rf_tune, metric = 'roc_auc', n = 1)
+
+#Boosted Tree Metrics
+bt_metrics <- collect_metrics(bt_tune)
+bt_metrics
+best_bt <- show_best(bt_tune, metric = 'roc_auc', n = 1)
+```
+
+7th step - Fit the models and workflow to training data set.
+
+```{r}
+#K-nearest neighbors fit
+final_knn_wkflow <- finalize_workflow(knn_wkflow, best_knn)
+knn_fit <- fit(final_knn_wkflow, data = sleep_train)
+
+#Elastic Net fit
+final_en_wkflow <- finalize_workflow(en_wkflow, best_en)
+en_fit <- fit(final_en_wkflow, data = sleep_train)
+
+#Random Forest fit
+final_rf_wkflow <- finalize_workflow(rf_wkflow, best_rf)
+rf_fit <- fit(final_rf_wkflow, data = sleep_train)
+
+#Boosted Tree fit
+final_bt_wkflow <- finalize_workflow(bt_wkflow, best_bt)
+bt_fit <- fit(final_bt_wkflow, data = sleep_train)
+```
+
+### Model Autoplots
+
+The next step for our models is to create visualizations. The autoplot function in r allows us to see how the tuned parameters impact the performance of the models which we measured with ROC AUC.
+
+#### Elastic Net Autoplot
+
+```{r, warning = FALSE}
+autoplot(en_tune)
+```
+
+Our elastic net model contained 10 levels where the penalty and mixture was tuned. Overall, the elastic net plot shows that the models with zero percentage of mixture, lasso penalty, do better which is visualized by the red line being higher than the other lines. That means it performs better to avoid reducing the predictors down to zero. Amount of regularization, x axis, represents the penalty hyper parameter and it appears the non-zero lassos improve as the penalty increases.
+
+#### K-Nearest Neighbor Autoplot
+
+```{r}
+autoplot(knn_tune, metric = 'roc_auc')
+
+```
+
+We also tuned our K-nearest neighbor model with 10 levels. The K-nearest neighbor plot tells us that the higher the number of nearest numbers, the better performance as ROC AUC increases but it does reach a stagnant level at around 4 nearest neighbors and beyond. It does reach above 0.992 which implies that it was a strong model.
+
+#### Random Forest Autoplot
+
+```{r}
+autoplot(rf_tune)
+
+```
+
+For our random forest plot the range of mtry was from 1 to 8, trees from 200 to 600, and min_n 10 to 20. It seems that as mtry, randomly selected predictors, increases up to around 2, performance improves as the ROC AUC increases and beyond that it remains in the 0.999 range which is outstanding. The number of trees does not make much of a difference as all the lines are near one another. Minimal node size also does not make much of an effect but a few different number of trees performed slightly better with a smaller minimal node size.
+
+#### Boosted Tree Autoplot
+
+```{r}
+autoplot(bt_tune, metric = 'roc_auc')
+
+```
+
+Finally for our boosted tree model, we set 5 different levels for our tuned parameters. The learning rate determines how fast the model learns so a higher learning rate would result in a lesser trained model. Therefore I set the range to be between -0.01 and 0.1 to obtain a lower learning rate. Looking at the plots the model appears to do better with lower learning rates. Moving onto the randomly selected predictors, as the number of mtry increase, so does the performance of the model because ROC AUC increases along with it. Number of trees we set from 200 to 600, it does have much of an effect on the model as the lines are essentially on top of one another.
+
+### Model Results
+
+With our models completed, we can finally compare their metrics to find the best performing one.
+
+```{r, fig.show = 'hide', results = 'hide'}
+
+sleep_knn_auc <- augment(knn_fit, new_data = sleep_train) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_auc(quality_of_sleep, .pred_6:.pred_9) %>%
+  select(.estimate)
+sleep_knn_auc
+
+
+sleep_en_auc <- augment(en_fit, new_data = sleep_train) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_auc(quality_of_sleep, .pred_6:.pred_9) %>%
+  select(.estimate)
+sleep_en_auc
+
+sleep_rf_auc <- augment(rf_fit, new_data = sleep_train) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_auc(quality_of_sleep, .pred_6:.pred_9) %>%
+  select(.estimate)
+sleep_rf_auc
+
+sleep_bt_auc <- augment(bt_fit, new_data = sleep_train) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_auc(quality_of_sleep, .pred_6:.pred_9) %>%
+  select(.estimate)
+sleep_bt_auc
+```
+
+```{r R.options=list(pillar.sigfig = 7)}
+# We will be creating a tibble that displays the models and their ROC AUC score
+Model_compare <- tibble(Model = c("K Nearest Neighbors", "Elastic Net", "Random Forest", "Boosted Trees"), roc_auc = c(sleep_knn_auc$.estimate, sleep_en_auc$.estimate, sleep_rf_auc$.estimate , sleep_bt_auc$.estimate))
+
+#Descending order
+Model_compare <- Model_compare %>% 
+  arrange(desc(roc_auc))
+
+Model_compare
+```
+
+WOW this means that the K-nearest neighbors, random forest, and boosted trees all had perfect predictions. This however can be explained by the small number of observations in the data set, some of the variables had did not have all of their possible values in the data set while others had too few observations for unique values. Therefore the models had to be condensed down onto a select few values for some variables, the model would be unable to predict some values or use other values as predictors in this case and thus making it easier to predict. To find the best model, we will be getting the optimal value of each model to compare.
+
+```{r R.options=list(pillar.sigfig = 7)}
+
+# We will be creating a tibble that displays the models and their ROC AUC score
+Model_compare <- tibble(Model = c("K Nearest Neighbors", "Elastic Net", "Random Forest", "Boosted Trees"), roc_auc = c(best_knn$mean, best_en$mean, best_rf$mean, best_bt$mean))
+
+#Descending order
+Model_compare <- Model_compare %>% 
+  arrange(desc(roc_auc))
+
+Model_compare
+
+```
+
+Based on the model comparisons, the random forest model had the best performance with a roc_auc score of 0.9996 which is really outstanding. In second was the boosted trees model which was really close behind with a ROC AUC score of 0.9995. Now that we found our best model we have to now evaluate its performance on the testing set.
+
+### Best Model Results
+
+With our best model now being the random forest model, we can now examine its results. We will be evaluating its performance on the testing set, new data.
+
+#### Random Forest Model
+
+```{r R.options=list(pillar.sigfig = 7)}
+rf_tune %>% 
+  collect_metrics() %>%
+  arrange(desc(mean)) %>%
+  slice(1)
+
+```
+
+Random Forest #6 had the best performance with a ROC AUC score of 0.9996 as seen above. In terms of its parameters it had a mtry of 6, 200 trees, and minimal node size of 10. Let's now assess it with the testing set.
+
+```{r R.options=list(pillar.sigfig = 7)}
+options(digits = 7)
+augment(rf_fit, new_data = sleep_test) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_auc(quality_of_sleep, .pred_6:.pred_9) %>%
+  select(.estimate)
+```
+
+It had a slightly lower performance on testing model compared to the average ROC AUC across folds however it still performed really well with a ROC AUC score of 0.9995.
+
+#### Testing the Model
+
+We will now make predictions on the observations in the testing set and see specifically the performance on untrained data.
+
+```{r}
+sleep_predict <- predict(rf_fit, new_data = sleep_test, type = "class")
+
+predict_vs_actual <- sleep_predict %>% bind_cols(sleep_test %>% select(quality_of_sleep))
+
+predict_vs_actual
+```
+
+#### Variable Importance Plot
+
+Let's take a look at which predictor variables were most useful in the random forest model. We will use training data as the random forest model was fitted to it.
+
+```{r, echo=FALSE}
+rf_fit %>% extract_fit_parsnip() %>% 
+  vip()
+```
+
+I was surprised to see heart_rate so high as the bar chart from the beginning showed no signs of correlation. Age also was really important which was interesting. The most important was sleep duration which was obvious as the longer someone sleeps, the higher the sleep quality.
+
+#### ROC Curve
+
+Let's plot a ROC Curve to visualize the ROC AUC scores. The closer the curve is to the Greek letter Γ, the better. As we can see most of our plots are like that but the model did have trouble predicting ratings of 7.
+
+```{r}
+sleep_roc_curve <- augment(rf_fit, new_data = sleep_test) %>%
+  select(quality_of_sleep, starts_with(".pred")) %>%
+  roc_curve(quality_of_sleep, .pred_6:.pred_9)
+
+autoplot(sleep_roc_curve)
+```
+
+### Conclusion
+
+![](images/dog sleep.png){width="318"}
+
+All in all after analyzing and fitting our models, the random forest model proved to be the best while K-nearest neighbors performed the worst. This was expected as the random forest model is really flexible and non-sensitive while K-nearest neighbors is highly sensitive. However all the models had incredible ROC AUC scores so they weren't too far behind, meaning they all could predict with near perfection.
+
+There are a few flaws with this data set however, there were too few observations and variables had potential values which were not represented by individuals or had values that had too few individuals so we could not use them for our predictions since they would not be enough to develop a correlation. In the future a bigger data set that encompasses more diverse individuals and more observations would improve this model.
+
+To conclude, building these models to attempt to predict sleep quality was a great way for me to learn more about machine learning and get my hands wet. It was really fun to see how all the parts fit together and getting the results from the models to compare them was really exciting. In the future I could try to implement more, different models and really explore machine learning.
+
+### Sources
+
+Data is from the Kaggle data set, [Sleep and Lifestyle Dataset](https://www.kaggle.com/datasets/uom190346a/sleep-health-and-lifestyle-dataset/data), observations gathered by user Lakiska Tharmalingam.
+
+Information about sleep was gathered from [SleepHealth.org](https://www.sleephealth.org/sleep-health/the-state-of-sleephealth-in-america/), American Psychological Association, and Centers for Disease Control and Prevention.

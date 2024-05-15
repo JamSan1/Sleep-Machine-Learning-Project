@@ -1,0 +1,13 @@
+-   `Person ID` : The unique identifier for each individual.
+-   `Gender` : Sex of the individual, Male/Female.
+-   `Age` : Age of the individual in years.
+-   `Occupation` : The individual's profession.
+-   `Sleep Duration` : How many hours the individual sleeps in a day.
+-   `Physical Activity Level` : Number of minutes an individual does physical activity in a day.
+-   `Stress Level` : Stress level on a scale from 1-10 rated by the individual.
+-   `BMI Category` : BMI Category of the individual, Underweight, Normal, Overweight, Obese.
+-   `Blood Pressure` : Blood Pressure level of the individual, systolic number / diastolic number.
+-   `Heart Rate` : Resting heart rate of the individual measured in beats per minute.
+-   `Daily Steps` : Number of steps the individual takes in a single day.
+-   `Sleep Disorder` : If the individual has a sleep disorder being None, Insomnia, or Sleep Apnea.
+-   `Quality of Sleep` : A rating of 1-10 by the individual on their sleep quality.
